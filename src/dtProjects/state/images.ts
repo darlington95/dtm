@@ -111,10 +111,15 @@ class ImagesController extends DTPStateController<ImagesControllerState> {
         })
     }
 
-    buildImageSource(search?: { text?: string; filters?: BackendFilter[] }) {
+    buildImageSource(search?: {
+        text?: string
+        filters?: BackendFilter[]
+        mode?: "word" | "substring"
+    }) {
         if (search) {
             this.setSearchText(search.text)
             this.setSearchFilters(search.filters)
+            this.state.imageSource.searchMode = search.mode ?? "word"
         }
 
         const selectedProjects = this.container.getService("projects")?.state.selectedProjects

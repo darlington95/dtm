@@ -12,6 +12,7 @@ import { DTPStateController } from "./types"
 
 export type SearchControllerState = {
     searchInput: string
+    searchMode: "word" | "substring"
     filters: Filter[]
 }
 
@@ -42,6 +43,7 @@ export type FilterValue = number | ContentType[] | Model | SamplerType | MediaTy
 class SearchController extends DTPStateController<SearchControllerState> {
     state = proxy<SearchControllerState>({
         searchInput: "",
+        searchMode: "word",
         filters: [],
     })
 
@@ -49,8 +51,17 @@ class SearchController extends DTPStateController<SearchControllerState> {
         super("search")
     }
 
-    onSearch: (searchText?: string, searchFilters?: BackendFilter[]) => void = () => {
+    onSearch: (
+        searchText?: string,
+        searchFilters?: BackendFilter[],
+        searchMode?: "word" | "substring",
+    ) => void = () => {
         console.warn("must assign onSearch callback")
+    }
+
+    setSearchMode(mode: "word" | "substring") {
+        this.state.searchMode = mode
+        this.applySearch()
     }
 
     addEmptyFilter(isEditing?: boolean) {
@@ -95,7 +106,7 @@ class SearchController extends DTPStateController<SearchControllerState> {
             filters.push(bFilter)
         }
 
-        this.onSearch(searchText, filters)
+        this.onSearch(searchText, filters, this.state.searchMode)
     }
 
     useSearchFilter<T>(index: number) {

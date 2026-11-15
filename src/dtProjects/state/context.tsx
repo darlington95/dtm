@@ -75,8 +75,8 @@ function createContainer() {
         const search = new SearchController()
         const details = new DetailsService(projects)
 
-        search.onSearch = (text, filters) => {
-            images.buildImageSource({ text: text ?? "", filters: filters ?? [] })
+        search.onSearch = (text, filters, mode) => {
+            images.buildImageSource({ text: text ?? "", filters: filters ?? [], mode })
         }
 
         DTPService.connect(channel).then(async () => {

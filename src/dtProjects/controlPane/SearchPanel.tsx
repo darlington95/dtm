@@ -1,6 +1,7 @@
 import { Box, Button, chakra, Em, HStack, Textarea, VStack } from "@chakra-ui/react"
 import { useEffect, useRef, useState } from "react"
 import { PanelButton, Tooltip } from "@/components"
+import IconToggle from "@/components/IconToggle"
 import { PiInfo } from "@/components/icons/icons"
 import { CLOSE_TRANSIENT_POPUPS_EVENT } from "@/dtProjects/imagesList/ContentPanelPopup"
 import TabContent from "@/components/TabContent"
@@ -24,6 +25,8 @@ function SearchPanel(props: SearchPanelComponentProps) {
             searchInputRef.current.focus()
         }
     }, [shouldFocus])
+
+    const searchMode = searchSnap.searchMode ?? "word"
 
     return (
         <TabContent
@@ -63,6 +66,50 @@ function SearchPanel(props: SearchPanelComponentProps) {
                     <PiInfo size={16} />
                 </Tooltip>
             </HStack>
+
+            {/* 検索モード切替: 語マッチ / 文字列の部分一致(CJK 対応) */}
+            <HStack marginTop={2} gap={2} alignItems={"center"}>
+                <Tooltip
+                    tip={
+                        <Box>
+                            <Em>Word</Em> matches individual words with stemming (good for
+                            English). <Em>Text</Em> matches substrings, so it also works for CJK
+                            languages like Japanese / Chinese where words are not space-separated.
+                        </Box>
+                    }
+                >
+                    <Box fontSize={"sm"} color={"fg.2"}>
+                        Match
+                    </Box>
+                </Tooltip>
+                <IconToggle
+                    value={{ word: searchMode === "word", substring: searchMode === "substring" }}
+                    onChange={(value) => {
+                        search.setSearchMode(value.word ? "word" : "substring")
+                    }}
+                    mode={"requireOne"}
+                >
+                    <IconToggle.Trigger
+                        aria-label={"Match by word"}
+                        size={"sm"}
+                        variant={"ghost"}
+                        option={"word"}
+                        tipText={"Word matching (stemming)"}
+                    >
+                        Word
+                    </IconToggle.Trigger>
+                    <IconToggle.Trigger
+                        aria-label={"Match by substring"}
+                        size={"sm"}
+                        variant={"ghost"}
+                        option={"substring"}
+                        tipText={"Substring matching (CJK-friendly)"}
+                    >
+                        Text
+                    </IconToggle.Trigger>
+                </IconToggle>
+            </HStack>
+
             <VStack
                 display={searchSnap.filters.length > 0 ? "flex" : "none"}
                 gap={0.5}
@@ -139,8 +186,12 @@ function SearchInfo() {
         <VStack fontSize={"sm"} alignItems={"flex-start"}>
             <Box>Images will match if the prompt contains any of the search terms.</Box>
             <Box>
-                Search terms are stemmed, so <Em>shade</Em>, <Em>shades</Em>, <Em>shading</Em>, and{" "}
-                <Em>shaded</Em> are all seen as the same word.
+                <Em>Word</Em> mode stems terms, so <Em>shade</Em>, <Em>shades</Em>, <Em>shading</Em>,
+                and <Em>shaded</Em> are all seen as the same word.
+            </Box>
+            <Box>
+                <Em>Text</Em> (substring) mode matches any contiguous substring, so it works for CJK
+                languages like Japanese / Chinese where words are not separated by spaces.
             </Box>
             <Box>Wrap words or phrases in "quotes" to require an exact text match.</Box>
             <B>cow boy</B>

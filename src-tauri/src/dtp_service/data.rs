@@ -68,6 +68,7 @@ impl DTPService {
         &self,
         project_ids: Option<Vec<i64>>,
         search: Option<String>,
+        search_mode: Option<String>,
         filters: Option<Vec<ListImagesFilter>>,
         sort: Option<String>,
         direction: Option<String>,
@@ -82,6 +83,7 @@ impl DTPService {
         let opts = crate::projects_db::dtos::image::ListImagesOptions {
             project_ids,
             search,
+            search_mode,
             filters,
             sort,
             direction,

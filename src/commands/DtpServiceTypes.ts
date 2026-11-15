@@ -116,6 +116,8 @@ export interface ListImagesFilter {
 export interface ImagesSource {
     projectIds?: number[]
     search?: string
+    /** 検索モード: "word"(語マッチ・既定) / "substring"(文字列の部分一致・CJK 対応) */
+    searchMode?: "word" | "substring"
     filters?: ListImagesFilter[]
     sort?: string
     direction?: "asc" | "desc"

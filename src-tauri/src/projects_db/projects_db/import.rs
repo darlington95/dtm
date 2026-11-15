@@ -372,6 +372,11 @@ impl ProjectsDb {
             .execute_unprepared("INSERT INTO images_fts(images_fts) VALUES('rebuild')")
             .await?;
 
+        // trigram（部分一致）インデックスも併せて再構築
+        self.db
+            .execute_unprepared("INSERT INTO images_fts_trigram(images_fts_trigram) VALUES('rebuild')")
+            .await?;
+
         Ok(())
     }
 }

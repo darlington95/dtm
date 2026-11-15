@@ -77,7 +77,8 @@ impl ProjectsDb {
         }
 
         if let Some(search_text) = &opts.search {
-            query = search::add_search(query, search_text);
+            let mode = opts.search_mode.as_deref().unwrap_or("word");
+            query = search::add_search(query, search_text, mode);
         }
 
         if let Some(filters) = opts.filters {
