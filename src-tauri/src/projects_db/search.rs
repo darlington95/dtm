@@ -79,7 +79,8 @@ fn add_search_word(
 }
 
 /// 文字列の部分一致モード。
-/// 引用語・非引用語いずれも trigram FTS（`images_fts_trigram`）で部分一致。
+/// 引用語・非引用語いずれも trigram FTS（`images_fts_trigram`、`prompt_search` 列限定）で部分一致。
+/// 引用語は AND 結合、非引用語は OR 結合。
 /// 3 文字未満のクエリは trigram では検索できないため LIKE（`prompt LIKE %term%`）にフォールバック。
 fn add_search_substring(
     mut query: Select<images::Entity>,
@@ -122,6 +123,8 @@ fn add_search_substring(
     }
 
     // 3. Remaining terms → 部分一致の OR。
+    //    3文字未満の語（LIKE）と 3文字以上の語（trigram FTS）は、
+    //    いずれも「いっずれかの語でマッチ」の意味論のため、同じ OR 群にまとめる。
     remainder = process_prompt(&remainder);
     let terms: Vec<&str> = remainder.split_whitespace().collect();
     if !terms.is_empty() {
@@ -130,28 +133,28 @@ fn add_search_substring(
         let fts_terms: Vec<&str> =
             terms.iter().copied().filter(|t| t.chars().count() >= 3).collect();
 
-        // 3文字未満の語: LIKE 部分一致（OR 結合、インデックス不要）
-        if !like_terms.is_empty() {
-            let mut cond = Condition::any();
-            for t in &like_terms {
-                let like = format!("%{}%", t);
-                cond = cond.add(Expr::col(images::Column::Prompt).like(like));
-            }
-            query = query.filter(cond);
+        let mut cond = Condition::any();
+
+        // 3文字未満の語: LIKE 部分一致（インデックス不要）
+        for t in &like_terms {
+            let like = format!("%{}%", t);
+            cond = cond.add(Expr::col(images::Column::Prompt).like(like));
         }
 
-        // 3文字以上の語: trigram FTS で部分一致（OR 結合）
+        // 3文字以上の語: trigram FTS で部分一致（prompt_search 列限定・パラメータ化）
         if !fts_terms.is_empty() {
             let or_terms = fts_terms
                 .iter()
-                .map(|t| fts_quote(t))
+                .map(|t| format!("prompt_search:{}", fts_quote(t)))
                 .collect::<Vec<_>>()
                 .join(" OR ");
-            let subq = format!(
-                "images.id IN (SELECT rowid FROM images_fts_trigram WHERE images_fts_trigram MATCH '{or_terms}')"
-            );
-            query = query.filter(Expr::cust(subq));
+            cond = cond.add(Expr::cust_with_expr(
+                "images.id IN (SELECT rowid FROM images_fts_trigram WHERE images_fts_trigram MATCH ?)",
+                SimpleExpr::value(or_terms),
+            ));
         }
+
+        query = query.filter(cond);
     }
 
     query
@@ -167,11 +170,11 @@ fn add_substring_filter(
         let like = format!("%{}%", term);
         return query.filter(Expr::col(images::Column::Prompt).like(like));
     }
-    let subq = format!(
-        "images.id IN (SELECT rowid FROM images_fts_trigram WHERE images_fts_trigram MATCH 'prompt_search:\"{}\"')",
-        fts_quote(term),
-    );
-    query.filter(Expr::cust(subq))
+    let fts_query = format!("prompt_search:{}", fts_quote(term));
+    query.filter(Expr::cust_with_expr(
+        "images.id IN (SELECT rowid FROM images_fts_trigram WHERE images_fts_trigram MATCH ?)",
+        SimpleExpr::value(fts_query),
+    ))
 }
 
 /// FTS5 の quoted-string として安全に埋め込めるように、ダブルクォートを二重化して "..." で囲む。
@@ -214,5 +217,12 @@ mod tests {
         let prompt = "<lora:facefix:1.0> close-up, woman's face";
         let processed = process_prompt(prompt);
         assert_eq!(processed, "lora facefix 1.0 close-up woman's face");
+    }
+
+    #[test]
+    fn test_fts_quote() {
+        assert_eq!(fts_quote("cat"), "\"cat\"");
+        // FTS5 の引用文字列ではダブルクォートを二重化してエスケープする
+        assert_eq!(fts_quote("say \"hi\""), "\"say \"\"hi\"\"\"");
     }
 }
