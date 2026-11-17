@@ -3,10 +3,12 @@ use sea_orm::{Condition, ExprTrait, QueryFilter, Select};
 use sea_query::{Expr, SimpleExpr};
 
 /// 検索モード:
-/// - "word"     : 既定。porter トークナイザーの FTS で語マッチ（stemming / prefix）。
-///                既存の挙動。CJK（漢字・日本語）の任意位置の部分一致はできない。
+/// - "auto":      既定。クエリ（正規化後）が ASCII かラテン文字のみなら "word"、
+///   それ以外の文字（CJK・キリル・ギリシャ等）を含むなら "substring"。
+/// - "word":      porter トークナイザーの FTS で語マッチ（stemming / prefix）。
+///   CJK（漢字・日本語）の任意位置の部分一致はできない。
 /// - "substring": trigram トークナイザーの FTS で文字列の部分一致。
-///                漢字・日本語を含む CJK の検索に有効。
+///   漢字・日本語を含む CJK の検索に有効。
 pub fn add_search(
     query: Select<images::Entity>,
     search_text: &str,
@@ -17,11 +19,58 @@ pub fn add_search(
         return query;
     }
 
-    if mode == "substring" {
-        add_search_substring(query, search_text)
-    } else {
-        add_search_word(query, search_text)
+    match mode {
+        "substring" => add_search_substring(query, search_text),
+        "auto" => {
+            // 判定はインデックス・クエリに実際に渡る形（process_prompt 正規化後）で行う。
+            // 全角ラテン文字は NFKC で ASCII 化されるため、ここで正規化しておく。
+            let normalized = process_prompt(search_text);
+            if is_ascii_or_latin(&normalized) {
+                add_search_word(query, search_text)
+            } else {
+                add_search_substring(query, search_text)
+            }
+        }
+        _ => add_search_word(query, search_text),
     }
+}
+
+/// クエリが ASCII かラテン文字（Unicode Script=Latin）のみで構成されるかを判定する。
+/// Auto モードのルーティングに使用する。数字・記号・空白は ASCII として許容する。
+fn is_ascii_or_latin(text: &str) -> bool {
+    text.chars()
+        .all(|c| c.is_ascii() || is_latin_char(c))
+}
+
+/// Unicode Script=Latin に属する文字かどうか（検索クエリで現実的に現れる範囲）。
+fn is_latin_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        // Latin-1 Supplement（é, ñ, ü, µ 等）
+        0x00AA
+            | 0x00B5
+            | 0x00BA
+            | 0x00C0..=0x00D6
+            | 0x00D8..=0x00F6
+            | 0x00F8..=0x00FF
+        // Latin Extended-A / B（ą, č, ğ, ş, ž, ł 等）
+            | 0x0100..=0x024F
+        // IPA Extensions（ə 等）
+            | 0x0250
+            | 0x02A0..=0x02AF
+        // Latin Extended Additional（ベトナム語 ộ, ẻ 等）
+            | 0x1E00..=0x1EFF
+        // Latin Extended-C / D / E / F
+            | 0x2C60..=0x2C7F
+            | 0xA720..=0xA7FF
+            | 0xAB30..=0xAB6F
+            | 0xABE3..=0xABEB
+        // Latin ligatures（ﬁ, ﬂ 等）
+            | 0xFB00..=0xFB06
+        // 全角ラテン文字
+            | 0xFF21..=0xFF3A
+            | 0xFF41..=0xFF5A
+    )
 }
 
 /// 語マッチモード（既存挙動）。
@@ -224,5 +273,29 @@ mod tests {
         assert_eq!(fts_quote("cat"), "\"cat\"");
         // FTS5 の引用文字列ではダブルクォートを二重化してエスケープする
         assert_eq!(fts_quote("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn test_is_ascii_or_latin() {
+        // 純 ASCII（英字・数字・記号・空白）は word 側
+        assert!(is_ascii_or_latin("skyscraper"));
+        assert!(is_ascii_or_latin("12345678"));
+        assert!(is_ascii_or_latin("cyber-punk 2.0"));
+        assert!(is_ascii_or_latin("!!!"));
+        assert!(is_ascii_or_latin(""));
+
+        // ラテン文字（子音付き・拡張）は word 側
+        assert!(is_ascii_or_latin("café")); // é: Latin-1
+        assert!(is_ascii_or_latin("żółw")); // ż, ł: Latin Extended-A
+        assert!(is_ascii_or_latin("phở")); // ợ: Latin Extended Additional（ベトナム語）
+        assert!(is_ascii_or_latin("straße")); // ß: Latin-1
+
+        // 非ラテン文字が混在すれば substring 側
+        assert!(!is_ascii_or_latin("ネコ")); // かな
+        assert!(!is_ascii_or_latin("猫")); // 漢字
+        assert!(!is_ascii_or_latin("собака")); // キリル
+        assert!(!is_ascii_or_latin("αγορά")); // ギリシャ
+        assert!(!is_ascii_or_latin("cat 猫")); // 混在
+        assert!(!is_ascii_or_latin("한국어")); // ハングル
     }
 }

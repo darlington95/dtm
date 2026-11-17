@@ -10,7 +10,7 @@ import type { ContainerEvent } from "@/utils/container/StateController"
 import { areEquivalent } from "@/utils/helpers"
 import type { ImagesSource } from "../types"
 import type { ProjectState, ProjectsControllerState } from "./projects"
-import type { BackendFilter } from "./search"
+import type { BackendFilter, SearchMode } from "./search"
 import { DTPStateController } from "./types"
 
 export type ImagesControllerState = {
@@ -114,12 +114,12 @@ class ImagesController extends DTPStateController<ImagesControllerState> {
     buildImageSource(search?: {
         text?: string
         filters?: BackendFilter[]
-        mode?: "word" | "substring"
+        mode?: SearchMode
     }) {
         if (search) {
             this.setSearchText(search.text)
             this.setSearchFilters(search.filters)
-            this.state.imageSource.searchMode = search.mode ?? "word"
+            this.state.imageSource.searchMode = search.mode ?? "auto"
         }
 
         const selectedProjects = this.container.getService("projects")?.state.selectedProjects

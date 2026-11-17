@@ -10,9 +10,12 @@ import {
 } from "../controlPane/filters/collections"
 import { DTPStateController } from "./types"
 
+/** 検索モード: "auto"(既定) / "word"(語マッチ) / "substring"(部分一致・CJK 対応) */
+export type SearchMode = "auto" | "word" | "substring"
+
 export type SearchControllerState = {
     searchInput: string
-    searchMode: "word" | "substring"
+    searchMode: SearchMode
     filters: Filter[]
 }
 
@@ -43,7 +46,7 @@ export type FilterValue = number | ContentType[] | Model | SamplerType | MediaTy
 class SearchController extends DTPStateController<SearchControllerState> {
     state = proxy<SearchControllerState>({
         searchInput: "",
-        searchMode: "word",
+        searchMode: "auto",
         filters: [],
     })
 
@@ -54,12 +57,12 @@ class SearchController extends DTPStateController<SearchControllerState> {
     onSearch: (
         searchText?: string,
         searchFilters?: BackendFilter[],
-        searchMode?: "word" | "substring",
+        searchMode?: SearchMode,
     ) => void = () => {
         console.warn("must assign onSearch callback")
     }
 
-    setSearchMode(mode: "word" | "substring") {
+    setSearchMode(mode: SearchMode) {
         this.state.searchMode = mode
         this.applySearch()
     }

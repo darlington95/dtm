@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct ListImagesOptions {
     pub project_ids: Option<Vec<i64>>,
     pub search: Option<String>,
-    /// 検索モード: "word"(既定, porter FTS の語マッチ) / "substring"(trigram の文字列部分一致)
+    /// 検索モード: "auto"(既定, クエリの文字種で word/substring を自動選択) /
+    ///            "word"(porter FTS の語マッチ) / "substring"(trigram の文字列部分一致)
     pub search_mode: Option<String>,
     pub filters: Option<Vec<ListImagesFilter>>,
     pub sort: Option<String>,

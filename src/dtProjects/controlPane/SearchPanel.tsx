@@ -26,7 +26,7 @@ function SearchPanel(props: SearchPanelComponentProps) {
         }
     }, [shouldFocus])
 
-    const searchMode = searchSnap.searchMode ?? "word"
+    const searchMode = searchSnap.searchMode ?? "auto"
 
     return (
         <TabContent
@@ -72,9 +72,12 @@ function SearchPanel(props: SearchPanelComponentProps) {
                 <Tooltip
                     tip={
                         <Box>
-                            <Em>Word</Em> matches individual words with stemming (good for
-                            English). <Em>Text</Em> matches substrings, so it also works for CJK
-                            languages like Japanese / Chinese where words are not space-separated.
+                            <Em>Auto</Em> picks the matching strategy by the query: word matching
+                            for ASCII / Latin text, substring matching when any other script
+                            (CJK, Cyrillic, etc.) is included. <Em>Word</Em> matches individual
+                            words with stemming (good for English). <Em>Text</Em> matches
+                            substrings, so it also works for CJK languages like Japanese / Chinese
+                            where words are not space-separated.
                         </Box>
                     }
                 >
@@ -83,12 +86,27 @@ function SearchPanel(props: SearchPanelComponentProps) {
                     </Box>
                 </Tooltip>
                 <IconToggle
-                    value={{ word: searchMode === "word", substring: searchMode === "substring" }}
+                    value={{
+                        auto: searchMode === "auto",
+                        word: searchMode === "word",
+                        substring: searchMode === "substring",
+                    }}
                     onChange={(value) => {
-                        search.setSearchMode(value.word ? "word" : "substring")
+                        search.setSearchMode(value.auto ? "auto" : value.word ? "word" : "substring")
                     }}
                     mode={"requireOne"}
                 >
+                    <IconToggle.Trigger
+                        aria-label={"Auto match"}
+                        size={"sm"}
+                        variant={"ghost"}
+                        option={"auto"}
+                        tipText={
+                            "Auto: word matching for ASCII / Latin text, substring matching otherwise"
+                        }
+                    >
+                        Auto
+                    </IconToggle.Trigger>
                     <IconToggle.Trigger
                         aria-label={"Match by word"}
                         size={"sm"}
@@ -185,6 +203,11 @@ function SearchInfo() {
     return (
         <VStack fontSize={"sm"} alignItems={"flex-start"}>
             <Box>Images will match if the prompt contains any of the search terms.</Box>
+            <Box>
+                <Em>Auto</Em> mode chooses by the query: ASCII / Latin text uses word matching,
+                and any other script (Japanese / Chinese / Cyrillic, etc.) uses substring
+                matching.
+            </Box>
             <Box>
                 <Em>Word</Em> mode stems terms, so <Em>shade</Em>, <Em>shades</Em>, <Em>shading</Em>,
                 and <Em>shaded</Em> are all seen as the same word.

@@ -237,5 +237,95 @@ mod tests {
         dtps.stop().await;
     }
 
+    /// Auto モード: 純 ASCII クエリは word 経路にルーティングされること
+    #[tokio::test]
+    async fn search_images_auto_mode_ascii() {
+        let (dtps, _event_helper, _wfh, _db_path) = test_fixture(false, true).await;
 
+        // 語そのものの検索: word モードの結果と等価であること
+        let w = run_search!(dtps, Some("skyscraper"), Some("word"));
+        let a = run_search!(dtps, Some("skyscraper"), Some("auto"));
+        assert!(a.total > 0, "Auto mode should find 'skyscraper'");
+        assert_eq!(
+            a.total, w.total,
+            "pure-ASCII auto query must behave like word mode"
+        );
+
+        // トークンにならない部分文字列（'crap' は 'skyscraper' の一部だが語ではない）:
+        // substring だとマッチするが、Auto は word 経路にルーティングするため word と等価（＝不一致）
+        let w2 = run_search!(dtps, Some("crap"), Some("word"));
+        let a2 = run_search!(dtps, Some("crap"), Some("auto"));
+        assert_eq!(
+            a2.total, w2.total,
+            "pure-ASCII auto query must not fall back to substring"
+        );
+        let s2 = run_search!(dtps, Some("crap"), Some("substring"));
+        assert!(
+            s2.total > a2.total,
+            "'crap' matches via substring but must not match in auto (word routing)"
+        );
+
+        dtps.stop().await;
+    }
+
+    /// Auto モード: CJK を含むクエリは substring 経路にルーティングされること
+    #[tokio::test]
+    async fn search_images_auto_mode_cjk() {
+        let (dtps, _event_helper, _wfh, _db_path) = test_fixture(false, true).await;
+
+        let project_id = ready_project_id(&dtps).await;
+        let db = dtps.get_db().await.unwrap();
+
+        let prompt = "ネコとイヌのイラスト";
+        db.db
+            .execute_unprepared(
+                &format!(
+                    "INSERT INTO images \
+                     (project_id, node_id, preview_id, clip_id, wall_clock, prompt, \
+                      negative_prompt, prompt_search, negative_prompt_search, \
+                      start_width, start_height, seed, strength, steps, guidance_scale, \
+                      shift, sampler, hires_fix, tiled_decoding, tiled_diffusion, \
+                      tea_cache, cfg_zero_star, has_mask, has_depth, has_pose, has_color, \
+                      has_custom, has_scribble, has_shuffle) \
+                     VALUES ({project_id}, 0, 0, 0, '2024-01-01 00:00:00', \
+                             '{prompt}', '', '{prompt}', '', 512, 512, 42, 1.0, 20, 7.0, 0.0, \
+                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)"
+                ),
+            )
+            .await
+            .unwrap();
+
+        db.db
+            .execute_unprepared("INSERT INTO images_fts(images_fts) VALUES('rebuild')")
+            .await
+            .unwrap();
+        db.db
+            .execute_unprepared("INSERT INTO images_fts_trigram(images_fts_trigram) VALUES('rebuild')")
+            .await
+            .unwrap();
+
+        // CJK クエリ → substring 経路（trigram FTS）でマッチ
+        let r1 = run_search!(dtps, Some("イラスト"), Some("auto"));
+        assert!(
+            r1.total >= 1,
+            "CJK auto query should match via substring routing"
+        );
+
+        // 3文字未満の CJK クエリ → substring 経路の LIKE フォールバックでマッチ
+        let r2 = run_search!(dtps, Some("イヌ"), Some("auto"));
+        assert!(r2.total >= 1, "2-char CJK auto query should match via LIKE fallback");
+
+        // 混在クエリ（ASCII + CJK）→ 全体が substring 経路。両方の画像が OR でヒットする
+        let r3 = run_search!(dtps, Some("skyscraper イラスト"), Some("auto"));
+        assert!(
+            r3.total >= 2,
+            "mixed auto query should match both CJK and English images"
+        );
+
+        // 連続しない CJK 文字列は誤検出しないこと
+        let r4 = run_search!(dtps, Some("ネコイ"), Some("auto"));
+        assert_eq!(r4.total, 0, "non-contiguous CJK must not match in auto mode");
+
+        dtps.stop().await;
+    }
 }

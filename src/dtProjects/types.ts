@@ -10,8 +10,12 @@ export type ScanProgressEvent = {
 export type ImagesSource = {
     projectIds?: number[]
     search?: string
-    /** 検索モード: "word"(語マッチ・既定) / "substring"(文字列の部分一致・CJK 対応) */
-    searchMode?: "word" | "substring"
+    /**
+     * 検索モード:
+     * "auto"(既定・クエリが ASCII/ラテン文字のみなら語マッチ、それを含むなら部分一致) /
+     * "word"(語マッチ) / "substring"(文字列の部分一致・CJK 対応)
+     */
+    searchMode?: "auto" | "word" | "substring"
     filters?: BackendFilter[]
     sort?: string
     direction?: "asc" | "desc"
