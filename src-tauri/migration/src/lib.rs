@@ -3,6 +3,7 @@ pub use sea_orm_migration::prelude::*;
 mod m20220101_000001_create_table;
 mod m20260308_105024_add_maint_column;
 mod m20261115_000001_add_images_fts_trigram;
+mod m20261118_000001_fts_remove_diacritics;
 
 pub struct Migrator;
 
@@ -13,6 +14,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20220101_000001_create_table::Migration),
             Box::new(m20260308_105024_add_maint_column::Migration),
             Box::new(m20261115_000001_add_images_fts_trigram::Migration),
+            Box::new(m20261118_000001_fts_remove_diacritics::Migration),
         ]
     }
 }

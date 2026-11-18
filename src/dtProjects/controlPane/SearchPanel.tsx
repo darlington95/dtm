@@ -77,7 +77,8 @@ function SearchPanel(props: SearchPanelComponentProps) {
                             (CJK, Cyrillic, etc.) is included. <Em>Word</Em> matches individual
                             words with stemming (good for English). <Em>Text</Em> matches
                             substrings, so it also works for CJK languages like Japanese / Chinese
-                            where words are not space-separated.
+                            where words are not space-separated. Diacritical marks are ignored in
+                            all modes ("cafe" matches "café").
                         </Box>
                     }
                 >

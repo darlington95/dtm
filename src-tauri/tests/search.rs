@@ -328,4 +328,99 @@ mod tests {
 
         dtps.stop().await;
     }
+
+    /// diacritic 無視一致: "cafe" は "Café" に、"naïve" は "naive" に全モードでマッチすること
+    #[tokio::test]
+    async fn search_images_diacritic_insensitive() {
+        let (dtps, _event_helper, _wfh, _db_path) = test_fixture(false, true).await;
+
+        let project_id = ready_project_id(&dtps).await;
+        let db = dtps.get_db().await.unwrap();
+
+        // prompt に diacritic を含む画像。prompt_search はインポート時と同じく
+        // process_prompt 済み（小文字化・diacritic 除去済み）の値を格納する。
+        let prompt = "Café Latte, Portrait";
+        db.db
+            .execute_unprepared(
+                &format!(
+                    "INSERT INTO images \
+                     (project_id, node_id, preview_id, clip_id, wall_clock, prompt, \
+                      negative_prompt, prompt_search, negative_prompt_search, \
+                      start_width, start_height, seed, strength, steps, guidance_scale, \
+                      shift, sampler, hires_fix, tiled_decoding, tiled_diffusion, \
+                      tea_cache, cfg_zero_star, has_mask, has_depth, has_pose, has_color, \
+                      has_custom, has_scribble, has_shuffle) \
+                     VALUES ({project_id}, 100, 0, 0, '2024-01-01 00:00:00', \
+                             '{prompt}', '', 'cafe latte portrait', '', 512, 512, 43, 1.0, 20, 7.0, 0.0, \
+                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)"
+                ),
+            )
+            .await
+            .unwrap();
+
+        // ASCII のみ画像（逆方向: アクセント付きクエリ → アクセントなしコンテンツ）
+        db.db
+            .execute_unprepared(
+                &format!(
+                    "INSERT INTO images \
+                     (project_id, node_id, preview_id, clip_id, wall_clock, prompt, \
+                      negative_prompt, prompt_search, negative_prompt_search, \
+                      start_width, start_height, seed, strength, steps, guidance_scale, \
+                      shift, sampler, hires_fix, tiled_decoding, tiled_diffusion, \
+                      tea_cache, cfg_zero_star, has_mask, has_depth, has_pose, has_color, \
+                      has_custom, has_scribble, has_shuffle) \
+                     VALUES ({project_id}, 101, 0, 0, '2024-01-01 00:00:00', \
+                             'naive girl', '', 'naive girl', '', 512, 512, 44, 1.0, 20, 7.0, 0.0, \
+                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)"
+                ),
+            )
+            .await
+            .unwrap();
+
+        // 挿入行がインデックスに反映されるよう再構築（trigger なし設計のため rebuild が必要）
+        db.db
+            .execute_unprepared("INSERT INTO images_fts(images_fts) VALUES('rebuild')")
+            .await
+            .unwrap();
+        db.db
+            .execute_unprepared("INSERT INTO images_fts_trigram(images_fts_trigram) VALUES('rebuild')")
+            .await
+            .unwrap();
+
+        // アクセントなしクエリ → アクセント付きコンテンツ（prompt_search は diacritic 除去済みで格納）
+        let r1 = run_search!(dtps, Some("cafe"), Some("word"));
+        assert!(r1.total >= 1, "word 'cafe' should match 'Café Latte, Portrait'");
+
+        // アクセント付きクエリ → process_prompt により diacritic 除去され、除去済みトークンにマッチ
+        let r2 = run_search!(dtps, Some("café"), Some("word"));
+        assert!(r2.total >= 1, "word 'café' should match 'Café Latte, Portrait'");
+
+        // 逆方向: アクセント付きクエリ → ASCII コンテンツ
+        let r3 = run_search!(dtps, Some("naïve"), Some("word"));
+        assert!(r3.total >= 1, "word 'naïve' should match 'naive girl'");
+
+        // Auto: ラテンクエリは word 経路にルーティングされ、同様にマッチ
+        let r4 = run_search!(dtps, Some("café"), Some("auto"));
+        assert!(r4.total >= 1, "auto 'café' should match via word routing");
+        let r5 = run_search!(dtps, Some("naïve"), Some("auto"));
+        assert!(r5.total >= 1, "auto 'naïve' should match via word routing");
+
+        // substring（trigram）: アクセントなしクエリがアクセント付きコンテンツにマッチ
+        let r6 = run_search!(dtps, Some("cafe"), Some("substring"));
+        assert!(r6.total >= 1, "substring 'cafe' should match via trigram");
+
+        // word モードの引用語（prompt_search での LIKE）: 大文字・アクセントを無視
+        let r7 = run_search!(dtps, Some("\"Café Latte\""), Some("word"));
+        assert!(r7.total >= 1, "phrase \"Café Latte\" should match via normalized LIKE");
+
+        // 3 文字未満の引用語 → prompt_search での LIKE フォールバック
+        let r8 = run_search!(dtps, Some("\"ca\""), Some("word"));
+        assert!(r8.total >= 1, "short phrase \"ca\" should match via LIKE on prompt_search");
+
+        // 無関係な語は依然マッチしないこと
+        let r9 = run_search!(dtps, Some("zzzqqqxx"), Some("word"));
+        assert_eq!(r9.total, 0, "unrelated term must not match");
+
+        dtps.stop().await;
+    }
 }

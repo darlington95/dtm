@@ -9,6 +9,9 @@ use sea_query::{Expr, SimpleExpr};
 ///   CJK（漢字・日本語）の任意位置の部分一致はできない。
 /// - "substring": trigram トークナイザーの FTS で文字列の部分一致。
 ///   漢字・日本語を含む CJK の検索に有効。
+/// 全モードで diacritic（子音符号）は無視される（"cafe" は "café" にマッチする）。
+/// process_prompt（NFKC → NFD による diacritic 除去 → 小文字化）を
+/// コンテンツ側（prompt_search 列）とクエリ側の両方に適用することで実現する。
 pub fn add_search(
     query: Select<images::Entity>,
     search_text: &str,
@@ -73,8 +76,50 @@ fn is_latin_char(c: char) -> bool {
     )
 }
 
+/// diacritic（子音符号）を除去する（NFD 分解 → combining mark 除外 → NFKC 再結合）。
+/// prompt_search 列の正規化（process_prompt）と LIKE 経路の diacritic 無視一致に使用する。
+/// 例: "café" → "cafe", "naïve" → "naive", "żółw" → "zołw"（ł は NFD 分解できないため残る）
+fn strip_diacritics(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
+    let decomposed: String = text
+        .nfd()
+        .filter(|&c| !is_combining_mark(c))
+        .collect();
+    decomposed.nfkc().collect()
+}
+
+/// combining mark（結合記号）かどうか。
+/// NFD 分解で実際に現れる主要スクリプトの範囲（ラテン・キリル・ヘブライ・アラビア・インド系等）をカバーする。
+fn is_combining_mark(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x0300..=0x036F   // Combining Diacritical Marks（ラテンの diacritic の大半）
+            | 0x0483..=0x0489 // Cyrillic
+            | 0x0591..=0x05BD
+            | 0x05BF
+            | 0x05C1..=0x05C2
+            | 0x05C4..=0x05C5
+            | 0x05C7       // Hebrew points
+            | 0x0610..=0x061A
+            | 0x064B..=0x065F // Arabic
+            | 0x0670
+            | 0x06D6..=0x06DC
+            | 0x06DF..=0x06E8
+            | 0x06EA..=0x06ED
+            | 0x0900..=0x0903
+            | 0x093A..=0x094C
+            | 0x094E..=0x094F // Devanagari
+            | 0x1AB0..=0x1AFF // Combining Diacritical Marks Extended
+            | 0x1DC0..=0x1DFF // Combining Diacritical Marks Supplement
+            | 0x20D0..=0x20FF // Combining Diacritical Marks for Symbols
+            | 0xFE20..=0xFE2F // Combining Half Marks
+    )
+}
+
 /// 語マッチモード（既存挙動）。
-/// 引用語 `"..."` は LIKE の部分一致、残り語は porter FTS（OR）でマッチ。
+/// 引用語 `"..."` は正規化後（小文字・diacritic 除去）に prompt_search 列で LIKE の部分一致、
+/// 残り語は porter FTS（OR）でマッチ。
 fn add_search_word(
     mut query: Select<images::Entity>,
     search_text: &str,
@@ -106,9 +151,16 @@ fn add_search_word(
     }
 
     // 2. Apply phrase filters (AND)
+    //    正規化後（小文字・diacritic 除去）の prompt_search 列で部分一致させることで、
+    //    FTS 経路と同様に大文字小文字・アクセントを無視してマッチする
+    //    （例: "Café Latte" ≡ "cafe latte"）。
     for phrase in &phrases {
-        let like = format!("%{}%", phrase);
-        query = query.filter(Expr::col(images::Column::Prompt).like(like));
+        let p = process_prompt(phrase).trim().to_string();
+        if p.is_empty() {
+            continue;
+        }
+        let like = format!("%{}%", p);
+        query = query.filter(Expr::col(images::Column::PromptSearch).like(like));
     }
 
     // 3. Remaining terms → FTS OR query
@@ -130,7 +182,8 @@ fn add_search_word(
 /// 文字列の部分一致モード。
 /// 引用語・非引用語いずれも trigram FTS（`images_fts_trigram`、`prompt_search` 列限定）で部分一致。
 /// 引用語は AND 結合、非引用語は OR 結合。
-/// 3 文字未満のクエリは trigram では検索できないため LIKE（`prompt LIKE %term%`）にフォールバック。
+/// 3 文字未満のクエリは trigram では検索できないため LIKE（`prompt_search LIKE %term%`、
+/// 正規化済みのため diacritic 無視）にフォールバック。
 fn add_search_substring(
     mut query: Select<images::Entity>,
     search_text: &str,
@@ -184,10 +237,10 @@ fn add_search_substring(
 
         let mut cond = Condition::any();
 
-        // 3文字未満の語: LIKE 部分一致（インデックス不要）
+        // 3文字未満の語: prompt_search での LIKE 部分一致（インデックス不要、diacritic 無視）
         for t in &like_terms {
             let like = format!("%{}%", t);
-            cond = cond.add(Expr::col(images::Column::Prompt).like(like));
+            cond = cond.add(Expr::col(images::Column::PromptSearch).like(like));
         }
 
         // 3文字以上の語: trigram FTS で部分一致（prompt_search 列限定・パラメータ化）
@@ -210,14 +263,14 @@ fn add_search_substring(
 }
 
 /// 単一の文字列部分一致フィルタを追加。
-/// 3 文字以上は trigram FTS、それ未満は LIKE にフォールバック。
+/// 3 文字以上は trigram FTS、それ未満は prompt_search での LIKE（diacritic 無視）にフォールバック。
 fn add_substring_filter(
     query: Select<images::Entity>,
     term: &str,
 ) -> Select<images::Entity> {
     if term.chars().count() < 3 {
         let like = format!("%{}%", term);
-        return query.filter(Expr::col(images::Column::Prompt).like(like));
+        return query.filter(Expr::col(images::Column::PromptSearch).like(like));
     }
     let fts_query = format!("prompt_search:{}", fts_quote(term));
     query.filter(Expr::cust_with_expr(
@@ -231,10 +284,13 @@ fn fts_quote(term: &str) -> String {
     format!("\"{}\"", term.replace('"', "\"\""))
 }
 
+/// 検索用プロンプトの正規化（NFKC → diacritic 除去 → 小文字 → 区切り記号をスペース化）。
+/// prompt_search / negative_prompt_search 列の生成と、検索クエリ側の正規化に使用する。
 pub fn process_prompt(prompt: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
 
     let mut prompt = prompt.nfkc().collect::<String>();
+    prompt = strip_diacritics(&prompt);
     prompt = prompt.to_lowercase();
     prompt = prompt.replace(
         [
@@ -266,6 +322,26 @@ mod tests {
         let prompt = "<lora:facefix:1.0> close-up, woman's face";
         let processed = process_prompt(prompt);
         assert_eq!(processed, "lora facefix 1.0 close-up woman's face");
+
+        // diacritic は除去され、大文字小文字・区切り記号も正規化される
+        let prompt = "Café Latte, (portrait)";
+        let processed = process_prompt(prompt);
+        assert_eq!(processed, "cafe latte portrait");
+    }
+
+    #[test]
+    fn test_strip_diacritics() {
+        // ラテンの diacritic は除去される
+        assert_eq!(strip_diacritics("café"), "cafe");
+        assert_eq!(strip_diacritics("naïve"), "naive");
+        assert_eq!(strip_diacritics("phở"), "pho"); // ợ = o + horn + dot-below
+        // ł は NFD で分解できない（ストロークは combining mark でない）ため残る
+        assert_eq!(strip_diacritics("żółw"), "zołw");
+        // 非ラテン文字 / 結合記号なし: 不変
+        assert_eq!(strip_diacritics("ネコ"), "ネコ");
+        assert_eq!(strip_diacritics("straße"), "straße"); // ß は diacritic でない
+        assert_eq!(strip_diacritics("ASCII 123"), "ASCII 123");
+        assert_eq!(strip_diacritics(""), "");
     }
 
     #[test]
